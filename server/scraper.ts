@@ -1,5 +1,4 @@
 import { chromium, type Browser, type Page } from 'playwright';
-import { fetchTeraboxFileInfo } from './terabox-api';
 
 export interface ScrapedMetadata {
   url: string;
@@ -7,11 +6,7 @@ export interface ScrapedMetadata {
   description?: string;
   thumbnail?: string;
   size?: string;
-  category?: string;
-  isdir?: string;
-  server_filename?: string;
-  dlink?: string;
-  thumbs?: Record<string, string>;
+  type?: string; // Added type to be scraped
   error?: string;
 }
 
@@ -31,110 +26,43 @@ function normalizeUrl(url: string): string {
 
 async function scrapeSingle(url: string, context: any): Promise<ScrapedMetadata> {
   const normalized = normalizeUrl(url);
-  console.log(`[Scraper] Starting to scrape single URL: ${normalized}`);
-  const appId = '250528';
-  const match = normalized.match(/\/s\/([a-zA-Z0-9_-]+)/);
-  const shortUrl = match ? match[1] : '';
+  console.log(`[Scraper] Starting to scrape single URL for meta tags: ${normalized}`);
 
   try {
     const page: Page = await context.newPage();
     await page.goto(normalized, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    try {
-      await page.waitForSelector('meta[property="og:image"], img[src*="thumbnail"], img[src*="teraboxcdn"], img[src*="dm-data"]', { timeout: 20000 });
-    } catch (e) {
-      console.warn('[Scraper] Thumbnail selector did not appear within 20s, continuing anyway.');
-    }
+    const metaData = await page.evaluate(() => {
+        const getMetaContent = (name: string) => {
+            const meta = document.querySelector(`meta[property='${name}']`) || document.querySelector(`meta[name='${name}']`);
+            return meta ? meta.getAttribute('content') : null;
+        };
 
-    const shareInfo = await page.evaluate(() => {
-        let shareid: string | undefined = undefined;
-        let uk: string | undefined = undefined;
-        let jsToken: string | undefined = undefined;
-        let dpLogid: string | undefined = undefined; // This is not currently used by the API but might be in the future
+        const title = getMetaContent('og:title') || document.title;
+        const description = getMetaContent('og:description');
+        const thumbnail = getMetaContent('og:image');
+        const type = getMetaContent('og:type');
+        // Note: size is not typically available in standard meta tags.
 
-        // @ts-ignore
-        if (window.jsToken) jsToken = String(window.jsToken);
-        // @ts-ignore
-        if (window.uk) uk = String(window.uk);
-
-        const scripts = Array.from(document.querySelectorAll('script'));
-        for (const script of scripts) {
-            const text = script.textContent || '';
-            if (text.includes('lastIndexOf("))")')) {
-                try {
-                    const match = text.match(/(let|var|const)\s+([a-zA-Z0-9_$]+)\s*=\s*'(.*?)';/);
-                    if (match && match[3]) {
-                        let t = match[3];
-                        if (t.includes('){"errno"')) {
-                            let o = t.lastIndexOf("))");
-                            let a = t.substring(0, o);
-
-                            const jsonMatch = a.match(/\{.*\}/);
-                            if (jsonMatch && jsonMatch[0]) {
-                                const data = JSON.parse(jsonMatch[0]);
-                                if (data.shareid) {
-                                    shareid = String(data.shareid);
-                                } else if (data.data && data.data.shareid) {
-                                    shareid = String(data.data.shareid);
-                                }
-                                if (data.uk && !uk) uk = String(data.uk);
-                                if (data.jsToken && !jsToken) jsToken = String(data.jsToken);
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.error("Error applying hint-based logic:", e);
-                }
-            }
-            if (shareid) break;
-        }
-
-        const html = document.documentElement.innerHTML;
-        if (!uk) {
-            let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-            if (ukMatch && ukMatch[1]) uk = ukMatch[1];
-        }
-        if (!jsToken) {
-            let jsTokenMatch = html.match(/jsToken["']?\s*[:=]\s*["']?([a-zA-Z0-9]+)/);
-            if (jsTokenMatch && jsTokenMatch[1]) jsToken = jsTokenMatch[1];
-        }
-        if (!shareid) {
-            let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-            if (shareidMatch && shareidMatch[1]) shareid = shareidMatch[1];
-        }
-
-        return { shareid, uk, jsToken, dpLogid, htmlDebug: (!shareid) ? html : undefined };
+        return { title, description, thumbnail, type };
     });
-
-    const { shareid, uk, jsToken, dpLogid, htmlDebug } = shareInfo;
-
-    if (!shareid) {
-      console.warn(`[Scraper] Critical info missing: shareid not found. HTML debug:`, htmlDebug);
-      throw new Error('Could not extract shareid.');
-    }
-
-    console.log(`[Scraper] Extracted shareid: ${shareid}, uk: ${uk}, jsToken: ${jsToken}`);
 
     await page.close();
 
-    const { data, debug } = await fetchTeraboxFileInfo({ shortUrl, appId, shareid, uk, jsToken, dpLogid, debug: true });
-    const file = data.list && data.list[0];
-    if (!file) throw new Error('No file info found in Terabox API response');
+    if (!metaData.title) {
+        throw new Error('Could not find title or og:title meta tag.');
+    }
 
     return {
       url: normalized,
-      title: file.server_filename,
-      size: file.size,
-      category: file.category,
-      isdir: file.isdir,
-      server_filename: file.server_filename,
-      dlink: file.dlink,
-      thumbs: file.thumbs,
-      description: undefined,
-      thumbnail: file.thumbs?.url1 || file.thumbs?.icon,
+      title: metaData.title,
+      description: metaData.description || undefined,
+      thumbnail: metaData.thumbnail || undefined,
+      type: metaData.type || undefined,
     };
+
   } catch (error: any) {
-    console.error(`[Scraper] Error scraping ${normalized}:`, error);
+    console.error(`[Scraper] Error scraping ${normalized} for meta tags:`, error);
     return { url: normalized, title: '', error: error.message };
   }
 }
