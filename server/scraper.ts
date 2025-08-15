@@ -5,8 +5,7 @@ export interface ScrapedMetadata {
   title: string;
   description?: string;
   thumbnail?: string;
-  size?: string;
-  type?: string; // Added type to be scraped
+  type?: string;
   error?: string;
 }
 
@@ -32,33 +31,35 @@ async function scrapeSingle(url: string, context: any): Promise<ScrapedMetadata>
     const page: Page = await context.newPage();
     await page.goto(normalized, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    const metaData = await page.evaluate(() => {
-        const getMetaContent = (name: string) => {
-            const meta = document.querySelector(`meta[property='${name}']`) || document.querySelector(`meta[name='${name}']`);
-            return meta ? meta.getAttribute('content') : null;
-        };
+    const getMetaContent = async (name: string) => {
+      try {
+        return await page.evaluate((name) => {
+          const meta = document.querySelector(`meta[property='${name}']`) || document.querySelector(`meta[name='${name}']`);
+          return meta ? meta.getAttribute('content') : null;
+        }, name);
+      } catch (e) {
+        console.warn(`[Scraper] Could not evaluate meta tag '${name}':`, e);
+        return null;
+      }
+    };
 
-        const title = getMetaContent('og:title') || document.title;
-        const description = getMetaContent('og:description');
-        const thumbnail = getMetaContent('og:image');
-        const type = getMetaContent('og:type');
-        // Note: size is not typically available in standard meta tags.
-
-        return { title, description, thumbnail, type };
-    });
+    const title = await getMetaContent('og:title') || await page.title();
+    const description = await getMetaContent('og:description');
+    const thumbnail = await getMetaContent('og:image');
+    const type = await getMetaContent('og:type');
 
     await page.close();
 
-    if (!metaData.title) {
+    if (!title) {
         throw new Error('Could not find title or og:title meta tag.');
     }
 
     return {
       url: normalized,
-      title: metaData.title,
-      description: metaData.description || undefined,
-      thumbnail: metaData.thumbnail || undefined,
-      type: metaData.type || undefined,
+      title,
+      description: description || undefined,
+      thumbnail: thumbnail || undefined,
+      type: type || undefined,
     };
 
   } catch (error: any) {
@@ -68,7 +69,6 @@ async function scrapeSingle(url: string, context: any): Promise<ScrapedMetadata>
 }
 
 export async function scrapeWithPlaywright(urls: string[]): Promise<ScrapedMetadata[]> {
-  // Use installed Chrome for best compatibility, non-headless for debug
   const browser = await chromium.launch({
     headless: false,
     channel: 'chrome',
@@ -78,7 +78,6 @@ export async function scrapeWithPlaywright(urls: string[]): Promise<ScrapedMetad
       '--disable-setuid-sandbox',
     ],
   });
-  // Create a context with user-agent and headers
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
     extraHTTPHeaders: {
@@ -92,7 +91,6 @@ export async function scrapeWithPlaywright(urls: string[]): Promise<ScrapedMetad
   });
   const results: ScrapedMetadata[] = [];
 
-  // Limit concurrency to avoid overload — batch size = 5
   const concurrency = 5;
   const batches = [];
 
