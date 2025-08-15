@@ -49,49 +49,114 @@ async function scrapeSingle(url: string, context: any): Promise<ScrapedMetadata>
     }
     // Enhanced extraction for shareid and uk
     const shareInfo = await page.evaluate(() => {
-      let shareid = undefined;
-      let uk = undefined;
-      // Try window context
+      let shareid: string | undefined = undefined;
+      let uk: string | undefined = undefined;
+
+      // 1. Try window context first, ensuring values are strings
       // @ts-ignore
-      if (window.shareid) shareid = window.shareid;
+      if (window.shareid) shareid = String(window.shareid);
       // @ts-ignore
-      if (window.uk) uk = window.uk;
-      // Try meta tags or script tags (support string or number)
-      const html = document.documentElement.innerHTML;
-      // Try both string and number for shareid/uk
-      let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-      let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-      if (shareidMatch && shareidMatch[1]) shareid = shareidMatch[1];
-      if (ukMatch && ukMatch[1]) uk = ukMatch[1];
-      // Scan all <script> tags for JSON with shareid/uk
-      if (!shareid || !uk) {
-        const scripts = Array.from(document.querySelectorAll('script'));
-        for (const script of scripts) {
-          const text = script.textContent || '';
-          // Look for JSON with shareid/uk
-          try {
-            if (text.includes('shareid') || text.includes('uk')) {
-              // Try to extract with regex
-              let sMatch = text.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-              let uMatch = text.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-              if (sMatch && sMatch[1] && !shareid) shareid = sMatch[1];
-              if (uMatch && uMatch[1] && !uk) uk = uMatch[1];
-              // Try to parse as JSON if it looks like an object
-              if ((!shareid || !uk) && text.trim().startsWith('{')) {
-                try {
-                  const obj = JSON.parse(text);
-                  if (obj.shareid && !shareid) shareid = obj.shareid;
-                  if (obj.uk && !uk) uk = obj.uk;
-                } catch {}
-              }
-            }
-          } catch {}
+      if (window.uk) uk = String(window.uk);
+      if (shareid && uk) return { shareid, uk };
+
+      // 2. Search meta tags for shareid and uk
+      const metaTags = Array.from(document.querySelectorAll('meta'));
+      for (const meta of metaTags) {
+        const content = meta.content || '';
+        if (meta.name === 'shareid' || meta.property === 'shareid') {
+          if (content && !shareid) shareid = content;
+        }
+        if (meta.name === 'uk' || meta.property === 'uk') {
+          if (content && !uk) uk = content;
         }
       }
-      // If still not found, return first 5000 chars of HTML for debug
-      if (!shareid || !uk) {
-        return { shareid, uk, htmlDebug: html.slice(0, 5000) };
+      if (shareid && uk) return { shareid, uk };
+
+      // 3. Scan all <script> tags for JSON data and regex matches
+      const scripts = Array.from(document.querySelectorAll('script'));
+      for (const script of scripts) {
+        const text = script.textContent || '';
+        if (!shareid || !uk) {
+            // Try to parse as JSON if it looks like an object
+            if (text.trim().startsWith('{')) {
+              try {
+                const obj = JSON.parse(text);
+                if (obj.shareid && !shareid) shareid = String(obj.shareid);
+                if (obj.uk && !uk) uk = String(obj.uk);
+
+                // Look in nested structures (e.g., Next.js page props)
+                if (obj.props?.pageProps?.fileInfo) {
+                  const fileInfo = obj.props.pageProps.fileInfo;
+                  if (fileInfo.shareid && !shareid) shareid = String(fileInfo.shareid);
+                  if (fileInfo.uk && !uk) uk = String(fileInfo.uk);
+                }
+              } catch {}
+            }
+
+            // Try to extract with a more flexible regex, looking for assignments
+            let sMatch = text.match(/["']?shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)["']?/);
+            let uMatch = text.match(/["']?uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)["']?/);
+            if (sMatch && sMatch[1] && !shareid) shareid = sMatch[1];
+            if (uMatch && uMatch[1] && !uk) uk = uMatch[1];
+        }
       }
+      if (shareid && uk) return { shareid, uk };
+
+      // 5. Try to apply hint-based logic, as a targeted fallback
+      if (!shareid) {
+        // User hint: "see in server the metadata slastIndexOf(")")),a=t.substring(0,o),o=t.su"
+        for (const script of scripts) {
+            const text = script.textContent || '';
+            // The double parenthesis seems to be a key part of the hint
+            if (text.includes('lastIndexOf("))")')) {
+                try {
+                    // This is experimental. We assume `t` is a variable in the script's scope.
+                    // We can't access the scope directly, but we can try to extract it if it's a simple string literal.
+                    const tMatch = text.match(/let\s+t\s*=\s*"(.*?)"/);
+                    if (tMatch && tMatch[1]) {
+                        let t = tMatch[1];
+                        let o = t.lastIndexOf("))");
+                        let a = t.substring(0, o); // 'a' is now a substring of 't'
+
+                        // The hint is incomplete. We are guessing what 'a' is.
+                        // It could be a JSON string.
+                        try {
+                            const data = JSON.parse(a);
+                            if (data.shareid) {
+                                shareid = String(data.shareid);
+                            }
+                            if (data.uk) {
+                                uk = String(data.uk);
+                            }
+                        } catch {
+                            // If not JSON, maybe it's another format.
+                            // This part is too speculative without more info.
+                        }
+                    }
+                } catch (e) {
+                    // This is experimental, so errors are possible.
+                }
+            }
+            if (shareid) break;
+        }
+      }
+
+      // 4. Final regex pass on the whole HTML as a fallback
+      const html = document.documentElement.innerHTML;
+      if (!shareid) {
+          let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
+          if (shareidMatch && shareidMatch[1]) shareid = shareidMatch[1];
+      }
+      if (!uk) {
+          let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
+          if (ukMatch && ukMatch[1]) uk = ukMatch[1];
+      }
+
+      // If still not found, return what we have, plus HTML for debug
+      if (!shareid || !uk) {
+        return { shareid, uk, htmlDebug: html }; // Return full HTML for debugging
+      }
+
       return { shareid, uk };
     });
     shareid = shareInfo.shareid;
