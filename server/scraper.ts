@@ -35,78 +35,92 @@ async function scrapeSingle(url: string, context: any): Promise<ScrapedMetadata>
   const appId = '250528';
   const match = normalized.match(/\/s\/([a-zA-Z0-9_-]+)/);
   const shortUrl = match ? match[1] : '';
-  let shareid: string | undefined = undefined;
-  let uk: string | undefined = undefined;
-  let jsToken: string | undefined = undefined;
-  let dpLogid: string | undefined = undefined;
+
   try {
-    // Use Playwright to extract shareid and uk from the page
     const page: Page = await context.newPage();
     await page.goto(normalized, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Wait for the thumbnail image to appear (up to 20s)
+
     try {
       await page.waitForSelector('meta[property="og:image"], img[src*="thumbnail"], img[src*="teraboxcdn"], img[src*="dm-data"]', { timeout: 20000 });
     } catch (e) {
       console.warn('[Scraper] Thumbnail selector did not appear within 20s, continuing anyway.');
     }
-    // Enhanced extraction for shareid and uk
+
     const shareInfo = await page.evaluate(() => {
-      let shareid: string | undefined = undefined;
-      let uk: string | undefined = undefined;
-      let jsToken: string | undefined = undefined;
-      let dpLogid: string | undefined = undefined;
+        let shareid: string | undefined = undefined;
+        let uk: string | undefined = undefined;
+        let jsToken: string | undefined = undefined;
+        let dpLogid: string | undefined = undefined; // This is not currently used by the API but might be in the future
 
-      // Try window context
-      // @ts-ignore
-      if (window.shareid) shareid = String(window.shareid);
-      // @ts-ignore
-      if (window.uk) uk = String(window.uk);
-      // @ts-ignore
-      if (window.jsToken) jsToken = String(window.jsToken);
+        // @ts-ignore
+        if (window.jsToken) jsToken = String(window.jsToken);
+        // @ts-ignore
+        if (window.uk) uk = String(window.uk);
 
-      const html = document.documentElement.innerHTML;
+        const scripts = Array.from(document.querySelectorAll('script'));
+        for (const script of scripts) {
+            const text = script.textContent || '';
+            if (text.includes('lastIndexOf("))")')) {
+                try {
+                    const match = text.match(/(let|var|const)\s+([a-zA-Z0-9_$]+)\s*=\s*'(.*?)';/);
+                    if (match && match[3]) {
+                        let t = match[3];
+                        if (t.includes('){"errno"')) {
+                            let o = t.lastIndexOf("))");
+                            let a = t.substring(0, o);
 
-      // Regex for dp-logid
-      let dpLogidMatch = html.match(/dp-logid["']?\s*:\s*["']?([a-zA-Z0-9_-]+)/);
-      if (dpLogidMatch && dpLogidMatch[1]) {
-          dpLogid = dpLogidMatch[1];
-      }
+                            const jsonMatch = a.match(/\{.*\}/);
+                            if (jsonMatch && jsonMatch[0]) {
+                                const data = JSON.parse(jsonMatch[0]);
+                                if (data.shareid) {
+                                    shareid = String(data.shareid);
+                                } else if (data.data && data.data.shareid) {
+                                    shareid = String(data.data.shareid);
+                                }
+                                if (data.uk && !uk) uk = String(data.uk);
+                                if (data.jsToken && !jsToken) jsToken = String(data.jsToken);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error applying hint-based logic:", e);
+                }
+            }
+            if (shareid) break;
+        }
 
-      // Regex for jsToken if not in window
-      if (!jsToken) {
-          let jsTokenMatch = html.match(/jsToken["']?\s*[:=]\s*["']?([a-zA-Z0-9]+)/);
-          if (jsTokenMatch && jsTokenMatch[1]) {
-              jsToken = jsTokenMatch[1];
-          }
-      }
+        const html = document.documentElement.innerHTML;
+        if (!uk) {
+            let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
+            if (ukMatch && ukMatch[1]) uk = ukMatch[1];
+        }
+        if (!jsToken) {
+            let jsTokenMatch = html.match(/jsToken["']?\s*[:=]\s*["']?([a-zA-Z0-9]+)/);
+            if (jsTokenMatch && jsTokenMatch[1]) jsToken = jsTokenMatch[1];
+        }
+        if (!shareid) {
+            let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
+            if (shareidMatch && shareidMatch[1]) shareid = shareidMatch[1];
+        }
 
-      // Fallback for shareid/uk
-      if (!shareid) {
-          let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-          if (shareidMatch && shareidMatch[1]) shareid = shareidMatch[1];
-      }
-      if (!uk) {
-          let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-          if (ukMatch && ukMatch[1]) uk = ukMatch[1];
-      }
-
-      return { shareid, uk, jsToken, dpLogid, htmlDebug: (!shareid || !uk || !jsToken) ? html.slice(0, 5000) : undefined };
+        return { shareid, uk, jsToken, dpLogid, htmlDebug: (!shareid) ? html : undefined };
     });
-    shareid = shareInfo.shareid;
-    uk = shareInfo.uk;
-    jsToken = shareInfo.jsToken;
-    dpLogid = shareInfo.dpLogid;
 
-    if (!shareid || !uk || !jsToken) {
-        console.warn(`[Scraper] Missing critical info: shareid=${shareid}, uk=${uk}, jsToken=${jsToken}. HTML debug:`, shareInfo.htmlDebug);
+    const { shareid, uk, jsToken, dpLogid, htmlDebug } = shareInfo;
+
+    if (!shareid) {
+      console.warn(`[Scraper] Critical info missing: shareid not found. HTML debug:`, htmlDebug);
+      throw new Error('Could not extract shareid.');
     }
-    console.log(`[Scraper] Extracted shareid: ${shareid}, uk: ${uk}, jsToken: ${jsToken}, dpLogid: ${dpLogid}`);
+
+    console.log(`[Scraper] Extracted shareid: ${shareid}, uk: ${uk}, jsToken: ${jsToken}`);
 
     await page.close();
 
     const { data, debug } = await fetchTeraboxFileInfo({ shortUrl, appId, shareid, uk, jsToken, dpLogid, debug: true });
     const file = data.list && data.list[0];
     if (!file) throw new Error('No file info found in Terabox API response');
+
     return {
       url: normalized,
       title: file.server_filename,
