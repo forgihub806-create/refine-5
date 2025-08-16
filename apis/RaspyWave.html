@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RaspyWave API Test</title>
+</head>
+<body>
+    <h1>Test RaspyWave API</h1>
+    <input type="text" id="raspyLink" placeholder="Paste TeraBox share link" style="width:400px;">
+    <button id="raspyBtn">Fetch RaspyWave</button>
+
+    <pre id="output"></pre>
+
+    <script>
+        const output = document.getElementById("output");
+
+        document.getElementById("raspyBtn").addEventListener("click", async () => {
+            const link = document.getElementById("raspyLink").value.trim();
+            if (!link) {
+                output.textContent = "Please enter a TeraBox share link.";
+                return;
+            }
+            output.textContent = "Fetching RaspyWave...";
+            try {
+                const res = await fetch(`http://localhost:3000/raspywave-proxy`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ link })
+                });
+                const text = await res.text();
+                output.textContent = text;
+            } catch (err) {
+                output.textContent = "Error: " + err.message;
+            }
+        });
+    </script>
+</body>
+</html>

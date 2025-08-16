@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h2>Test tera-downloader.cc API</h2>
+  <input type="text" id="url" placeholder="Enter Terabox link" size="60">
+  <button onclick="callAPI()">Send</button>
+  <pre id="output"></pre>
+
+  <script>
+    async function callAPI() {
+      const url = document.getElementById("url").value;
+      const res = await fetch("http://localhost:3000/tera-downloader-cc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+      document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+    }
+  </script>
+</body>
+</html>

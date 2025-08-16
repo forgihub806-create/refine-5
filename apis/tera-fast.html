@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Teraboxfast API Fetch</title>
+</head>
+<body>
+  <h1>Teraboxfast API Fetch</h1>
+
+  <input type="text" id="url" placeholder="Enter Terabox URL" size="60">
+  <button onclick="fetchData()">Fetch Data</button>
+
+  <pre id="output"></pre>
+
+  <script>
+    async function fetchData() {
+      const url = document.getElementById("url").value.trim();
+      if (!url) {
+        alert("Please enter a URL");
+        return;
+      }
+
+      try {
+        // Call your backend instead of the external API directly
+        const params = new URLSearchParams({ url: url, key: "C7mAq" });
+        const response = await fetch(`http://localhost:3000/teraboxfast?${params.toString()}`);
+        const data = await response.json();
+        document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("output").textContent = "Error: " + error.message;
+      }
+    }
+  </script>
+</body>
+</html>

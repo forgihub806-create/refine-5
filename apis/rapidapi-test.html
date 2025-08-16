@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RapidAPI Terabox Test</title>
+</head>
+<body>
+    <h2>Test RapidAPI Terabox Downloader</h2>
+    <input type="text" id="linkInput" placeholder="Enter Terabox link" size="60">
+    <button onclick="sendRequest()">Test API</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function sendRequest() {
+            const link = document.getElementById("linkInput").value;
+            const res = await fetch("http://localhost:3000/rapidapi", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ link })
+            });
+            const data = await res.json();
+            document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>

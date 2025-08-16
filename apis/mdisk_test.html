@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mdisk API Dynamic Tester</title>
+</head>
+<body>
+    <h1>Mdisk API Dynamic Tester</h1>
+    <input type="text" id="apiUrl" placeholder="Paste full API link here" style="width:400px;" />
+    <button id="testBtn">Fetch</button>
+    <pre id="output"></pre>
+
+    <script>
+        document.getElementById("testBtn").addEventListener("click", async () => {
+            const apiUrl = document.getElementById("apiUrl").value.trim();
+            const output = document.getElementById("output");
+
+            if (!apiUrl) {
+                output.textContent = "Please enter an API link.";
+                return;
+            }
+
+            output.textContent = "Fetching...";
+            try {
+                const res = await fetch(`http://localhost:3000/mdisk-proxy?url=${encodeURIComponent(apiUrl)}`);
+                const text = await res.text();
+                output.textContent = text;
+            } catch (err) {
+                output.textContent = "Error: " + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
