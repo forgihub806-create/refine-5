@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { startServer, stopServer } from './index';
-import { scrapeWithPlaywright } from './scraper';
+import { scrape } from './scraper';
 
 vi.mock('./scraper.ts', () => ({
-  scrapeWithPlaywright: vi.fn().mockResolvedValue([
+  scrape: vi.fn().mockResolvedValue([
     {
       url: 'http://example.com/video.mp4',
       title: 'Scraped Title',

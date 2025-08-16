@@ -5,7 +5,7 @@ import { insertMediaItemSchema, insertTagSchema, insertCategorySchema, type Medi
 import { z } from "zod";
 import { WebSocketServer } from 'ws';
 
-import { scrapeWithPlaywright } from "./scraper.ts";
+import { scrape } from "./scraper.ts";
 
 // MultiScraper integration
 import fetch from "node-fetch";
@@ -19,17 +19,19 @@ async function scrapeMetadata(mediaItemId: string, storage: IStorage) {
   if (!mediaItem) return;
 
   console.log(`Scraping metadata for: ${mediaItem.url}`);
-  const results = await scrapeWithPlaywright([mediaItem.url]);
+  const results = await scrape([mediaItem.url]);
   const result = results[0];
 
   if (result) {
     console.log('Scrape result:', result);
 
     if (result.title) {
-      const updates = {
+      const updates: Partial<InsertMediaItem> = {
         title: result.title,
         description: result.description || mediaItem.description,
         thumbnail: result.thumbnail || mediaItem.thumbnail,
+        size: result.size,
+        type: result.is_folder ? 'folder' : (result.type || 'video'),
         error: null,
         scrapedAt: new Date(),
       };
