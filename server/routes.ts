@@ -5,7 +5,14 @@ import { insertMediaItemSchema, insertTagSchema, insertCategorySchema, type Medi
 import { z } from "zod";
 import { WebSocketServer } from 'ws';
 
-import { scrapeWithPlaywright } from "./scraper.ts";
+import { getSingleFileInfo } from "./new-scraper.ts";
+import { teraboxFastProxy } from "./api-proxies/terabox-fast.ts";
+import { iteraplayProxy } from "./api-proxies/iteraplay.ts";
+import { playerteraProxy } from "./api-proxies/playertera.ts";
+import { mdiskProxy } from "./api-proxies/mdisk.ts";
+import { rapidapiProxy } from "./api-proxies/rapidapi.ts";
+import { teraDownloaderCcProxy } from "./api-proxies/tera-downloader-cc.ts";
+import { teradwnProxy } from "./api-proxies/teradwn.ts";
 
 // MultiScraper integration
 import fetch from "node-fetch";
@@ -19,17 +26,18 @@ async function scrapeMetadata(mediaItemId: string, storage: IStorage) {
   if (!mediaItem) return;
 
   console.log(`Scraping metadata for: ${mediaItem.url}`);
-  const results = await scrapeWithPlaywright([mediaItem.url]);
-  const result = results[0];
+  const result = await getSingleFileInfo(mediaItem.url);
 
   if (result) {
     console.log('Scrape result:', result);
 
     if (result.title) {
-      const updates = {
+      const updates: Partial<InsertMediaItem> = {
         title: result.title,
         description: result.description || mediaItem.description,
         thumbnail: result.thumbnail || mediaItem.thumbnail,
+        size: result.size_bytes,
+        type: result.type,
         error: null,
         scrapedAt: new Date(),
       };
@@ -119,6 +127,20 @@ export function registerRoutes(app: Express, storage: IStorage): Server {
       res.status(500).json({ error: "Failed to fetch API options" });
     }
   });
+
+  app.get('/api/teraboxfast', teraboxFastProxy);
+
+  app.post('/api/iteraplay-proxy', iteraplayProxy);
+
+  app.post('/api/playertera-proxy', playerteraProxy);
+
+  app.get('/api/mdisk-proxy', mdiskProxy);
+
+  app.post('/api/rapidapi', rapidapiProxy);
+
+  app.post('/api/tera-downloader-cc', teraDownloaderCcProxy);
+
+  app.post('/api/teradownloadr', teradwnProxy);
 
 
   // Media Items Routes

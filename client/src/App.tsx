@@ -25,19 +25,14 @@ function useHashLocation(): [string, (path: string, opts?: { replace?: boolean }
   };
   return [path, navigate];
 }
-import Home from "@/pages/home";
 import AddMedia from "@/pages/add-media";
-import Settings from "@/pages/settings";
-import NotFound from "@/pages/not-found";
 import { useEffect, useState } from 'react';
 
 function AppRouter() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/" component={AddMedia} />
       <Route path="/add-media" component={AddMedia} />
-      <Route path="/settings" component={Settings} />
-      <Route component={NotFound} />
     </Switch>
   );
 }

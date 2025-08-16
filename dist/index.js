@@ -151,157 +151,433 @@ var insertApiOptionSchema = createInsertSchema(apiOptions).omit({
 // server/routes.ts
 import { z } from "zod";
 
-// server/scraper.ts
-import { chromium } from "playwright";
-
-// server/terabox-api.ts
+// server/new-scraper.ts
 import fetch from "node-fetch";
-async function fetchTeraboxFileInfo({ shortUrl, appId, page = 1, shareid, uk, debug = false }) {
-  let res, data;
-  if (shareid && uk) {
-    let listUrl = `https://dm.terabox.app/share/list?app_id=${appId}&web=1&channel=dubox&clienttype=0&shareid=${shareid}&uk=${uk}&page=${page}`;
-    if (debug) console.log(`[TeraboxAPI] listUrl (shareid/uk): ${listUrl}`);
-    res = await fetch(listUrl, { headers: { "accept": "application/json" } });
-    if (res.ok) {
-      const raw = await res.text();
-      if (debug) console.log(`[TeraboxAPI] Raw response (shareid/uk):`, raw);
-      data = JSON.parse(raw);
-      if (data && data.list && data.list.length > 0) {
-        return { source: "list", data, debug: { url: listUrl, raw } };
-      }
-    }
+import { URL, URLSearchParams as URLSearchParams2 } from "url";
+var HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+};
+var VIDEO_EXT = [".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v"];
+var IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"];
+var AUDIO_EXT = [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"];
+var DOC_EXT = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt"];
+var ARCH_EXT = [".zip", ".rar", ".7z", ".tar", ".gz"];
+function humanSize(n) {
+  if (n === null) {
+    return null;
   }
-  if (shortUrl) {
-    let listUrl = `https://dm.terabox.app/share/list?app_id=${appId}&web=1&channel=dubox&clienttype=0&shorturl=${shortUrl}&page=${page}`;
-    if (debug) console.log(`[TeraboxAPI] listUrl (shortUrl): ${listUrl}`);
-    res = await fetch(listUrl, { headers: { "accept": "application/json" } });
-    if (res.ok) {
-      const raw = await res.text();
-      if (debug) console.log(`[TeraboxAPI] Raw response (shortUrl):`, raw);
-      data = JSON.parse(raw);
-      if (data && data.list && data.list.length > 0) {
-        return { source: "list", data, debug: { url: listUrl, raw } };
-      }
-    }
-    let infoUrl = `https://dm.terabox.app/api/shorturlinfo?app_id=${appId}&web=1&channel=dubox&clienttype=0&shorturl=${shortUrl}`;
-    if (debug) console.log(`[TeraboxAPI] infoUrl (shortUrl): ${infoUrl}`);
-    res = await fetch(infoUrl, { headers: { "accept": "application/json" } });
-    if (res.ok) {
-      const raw = await res.text();
-      if (debug) console.log(`[TeraboxAPI] Raw response (shorturlinfo):`, raw);
-      data = JSON.parse(raw);
-      if (data && data.list && data.list.length > 0) {
-        return { source: "shorturlinfo", data, debug: { url: infoUrl, raw } };
-      }
-    }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let val = n;
+  while (val >= 1024 && i < units.length - 1) {
+    val /= 1024;
+    i += 1;
   }
-  throw new Error("No valid Terabox file info found");
+  return `${val.toFixed(2)} ${units[i]}`;
+}
+function guessType(name) {
+  if (!name) {
+    return "other";
+  }
+  const lower = name.toLowerCase();
+  for (const ext of VIDEO_EXT) {
+    if (lower.endsWith(ext)) return "video";
+  }
+  for (const ext of IMAGE_EXT) {
+    if (lower.endsWith(ext)) return "image";
+  }
+  for (const ext of AUDIO_EXT) {
+    if (lower.endsWith(ext)) return "audio";
+  }
+  for (const ext of DOC_EXT) {
+    if (lower.endsWith(ext)) return "document";
+  }
+  for (const ext of ARCH_EXT) {
+    if (lower.endsWith(ext)) return "archive";
+  }
+  return "other";
+}
+function extractSurl(url) {
+  try {
+    const parsed = new URL(url);
+    const surl = parsed.searchParams.get("surl");
+    if (surl) {
+      return surl;
+    }
+    const match = parsed.pathname.match(/\/s\/1([A-Za-z0-9_-]+)/);
+    if (match) {
+      return match[1];
+    }
+  } catch (e) {
+  }
+  return null;
+}
+async function resolveFinalUrl(url) {
+  const response = await fetch(url, { headers: HEADERS, redirect: "follow" });
+  return response.url;
+}
+function pickApiBase(hostname) {
+  hostname = (hostname || "").toLowerCase();
+  if (hostname.includes("1024tera.com")) {
+    return "https://www.1024tera.com/share/list";
+  }
+  if (hostname.includes("terabox.app")) {
+    return "https://www.terabox.app/share/list";
+  }
+  if (hostname.includes("terabox.com")) {
+    return "https://www.terabox.com/share/list";
+  }
+  return "https://www.terabox.app/share/list";
+}
+async function shareList(apiUrl, surl, referrer, folderFsid) {
+  const baseData = new URLSearchParams2({
+    app_id: "250528",
+    web: "1",
+    channel: "0",
+    clienttype: "0",
+    shorturl: surl,
+    root: "1"
+  });
+  const headers = { ...HEADERS };
+  if (referrer) {
+    headers["Referer"] = referrer;
+    headers["Origin"] = referrer.split("/sharing/")[0] || referrer;
+  }
+  if (folderFsid) {
+    baseData.set("fs_id", folderFsid);
+  }
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers,
+      body: baseData
+    });
+    const j = await response.json();
+    if (typeof j === "object" && j !== null && j.errno === 0 && Array.isArray(j.list)) {
+      return j.list;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+async function getSingleFileInfo(url) {
+  const finalUrl = await resolveFinalUrl(url);
+  const surl = extractSurl(finalUrl) || extractSurl(url);
+  if (!surl) {
+    return { error: "Could not parse surl from URL" };
+  }
+  const apiUrl = pickApiBase(new URL(finalUrl).hostname);
+  let items = await shareList(apiUrl, surl, finalUrl);
+  if (!items) {
+    return { error: "Failed to fetch metadata", url: finalUrl };
+  }
+  let depth = 0;
+  while (depth < 3 && items.length === 1 && items[0]?.isdir === 1) {
+    const folderId = items[0]?.fs_id;
+    const inner = await shareList(apiUrl, surl, finalUrl, folderId);
+    if (!inner) {
+      break;
+    }
+    items = inner;
+    depth += 1;
+  }
+  if (items.length !== 1 || items[0]?.isdir === 1) {
+    return {
+      title: items[0]?.server_filename || "Folder",
+      description: "This is a folder, not a single file.",
+      size_bytes: null,
+      size_human: null,
+      thumbnail: null,
+      type: "folder",
+      url: finalUrl
+    };
+  }
+  const f = items[0];
+  const name = f.server_filename || f.filename;
+  const size = f.size ? parseInt(f.size, 10) : null;
+  let thumb = null;
+  const thumbs = f.thumbs;
+  if (typeof thumbs === "object" && thumbs !== null) {
+    thumb = thumbs.url3 || thumbs.url2 || thumbs.url1;
+  }
+  return {
+    title: name,
+    description: "Shared via TeraBox",
+    size_bytes: size,
+    size_human: humanSize(size),
+    thumbnail: thumb,
+    type: guessType(name),
+    url: finalUrl
+  };
 }
 
-// server/scraper.ts
-function normalizeUrl(url) {
-  try {
-    const urlObject = new URL(url);
-    const path3 = urlObject.pathname;
-    const match = path3.match(/\/s\/([a-zA-Z0-9_-]+)/);
-    if (match && match[1]) {
-      return `https://1024terabox.com/s/${match[1]}`;
-    }
-  } catch (error) {
-    console.error(`Invalid URL: ${url}`, error);
+// server/api-proxies/terabox-fast.ts
+import fetch2 from "node-fetch";
+async function teraboxFastProxy(req, res) {
+  const { url, key } = req.query;
+  if (!url || !key) {
+    return res.status(400).json({ error: "Missing url or key" });
   }
-  return url;
-}
-async function scrapeSingle(url, browser) {
-  const normalized = normalizeUrl(url);
-  console.log(`[Scraper] Starting to scrape single URL: ${normalized}`);
-  const appId = "250528";
-  const match = normalized.match(/\/s\/([a-zA-Z0-9_-]+)/);
-  const shortUrl = match ? match[1] : "";
-  let shareid = void 0;
-  let uk = void 0;
   try {
-    const page = await browser.newPage();
-    await page.goto(normalized, { waitUntil: "domcontentloaded", timeout: 6e4 });
-    const shareInfo = await page.evaluate(() => {
-      let shareid2 = void 0;
-      let uk2 = void 0;
-      if (window.shareid) shareid2 = window.shareid;
-      if (window.uk) uk2 = window.uk;
-      const html = document.documentElement.innerHTML;
-      let shareidMatch = html.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-      let ukMatch = html.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-      if (shareidMatch && shareidMatch[1]) shareid2 = shareidMatch[1];
-      if (ukMatch && ukMatch[1]) uk2 = ukMatch[1];
-      if (!shareid2 || !uk2) {
-        const scripts = Array.from(document.querySelectorAll("script"));
-        for (const script of scripts) {
-          const text2 = script.textContent || "";
+    const response = await fetch2("https://hex.teraboxfast2.workers.dev/", {
+      method: "POST",
+      headers: {
+        "accept": "*/*",
+        "content-type": "application/json",
+        "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "referer": "https://www.teraboxfast.com/"
+      },
+      body: JSON.stringify({
+        url,
+        key
+      })
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
+  }
+}
+
+// server/api-proxies/iteraplay.ts
+import fetch3 from "node-fetch";
+var ITERAPLAY_API_KEY = "terabox_pro_api_august_2025_premium";
+async function iteraplayProxy(req, res) {
+  const { link } = req.body;
+  if (!link) {
+    return res.status(400).json({ error: "Missing 'link' in request body" });
+  }
+  try {
+    const response = await fetch3("https://api.iteraplay.com/", {
+      method: "POST",
+      headers: {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "x-api-key": ITERAPLAY_API_KEY,
+        "Referer": "https://www.teraboxdownloader.pro/"
+      },
+      body: JSON.stringify({ link })
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
+  }
+}
+
+// server/api-proxies/playertera.ts
+import fetch4 from "node-fetch";
+async function playerteraProxy(req, res) {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: "Missing 'url' in request body" });
+  }
+  try {
+    const response = await fetch4("https://playertera.com/api/process-terabox", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "priority": "u=1, i",
+        "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "x-csrf-token": "w0p0LHPpNZFrLR6Rh78o8zBzzyXdeZdEMjiDSSD4",
+        // may expire
+        "Referer": "https://playertera.com/"
+      },
+      body: JSON.stringify({ url })
+    });
+    const text2 = await response.text();
+    try {
+      const data = JSON.parse(text2);
+      res.json(data);
+    } catch (e) {
+      res.send(text2);
+    }
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
+  }
+}
+
+// server/api-proxies/mdisk.ts
+import fetch5 from "node-fetch";
+import * as cheerio from "cheerio";
+async function mdiskProxy(req, res) {
+  const targetUrl = req.query.url;
+  if (!targetUrl) {
+    return res.status(400).json({ error: "Missing 'url' query parameter" });
+  }
+  try {
+    const response = await fetch5(targetUrl, {
+      method: "GET",
+      headers: {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9",
+        "msc": "awvqjqohzeaeymhgfrpsgq",
+        "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site"
+      }
+    });
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    let initialState = null;
+    $("script").each((i, el) => {
+      const scriptContent = $(el).html();
+      if (scriptContent && scriptContent.includes("window.__INITIAL_STATE__")) {
+        const match = scriptContent.match(/window\.__INITIAL_STATE__\s*=\s*({.*});/);
+        if (match && match[1]) {
           try {
-            if (text2.includes("shareid") || text2.includes("uk")) {
-              let sMatch = text2.match(/shareid["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-              let uMatch = text2.match(/uk["']?\s*[:=]\s*["']?([a-zA-Z0-9_-]+)/);
-              if (sMatch && sMatch[1] && !shareid2) shareid2 = sMatch[1];
-              if (uMatch && uMatch[1] && !uk2) uk2 = uMatch[1];
-              if ((!shareid2 || !uk2) && text2.trim().startsWith("{")) {
-                try {
-                  const obj = JSON.parse(text2);
-                  if (obj.shareid && !shareid2) shareid2 = obj.shareid;
-                  if (obj.uk && !uk2) uk2 = obj.uk;
-                } catch {
-                }
-              }
-            }
-          } catch {
+            initialState = JSON.parse(match[1]);
+          } catch (e) {
+            console.error("Failed to parse INITIAL_STATE JSON:", e);
           }
         }
       }
-      if (!shareid2 || !uk2) {
-        return { shareid: shareid2, uk: uk2, htmlDebug: html.slice(0, 5e3) };
-      }
-      return { shareid: shareid2, uk: uk2 };
     });
-    shareid = shareInfo.shareid;
-    uk = shareInfo.uk;
-    if (!shareid || !uk) {
-      console.warn("[Scraper] Could not extract shareid or uk. HTML debug:", shareInfo.htmlDebug);
+    if (initialState) {
+      res.json(initialState);
+    } else {
+      res.status(404).json({ error: "Could not find or parse window.__INITIAL_STATE__" });
     }
-    console.log(`[Scraper] Extracted shareid: ${shareid}, uk: ${uk}`);
-    await page.close();
-    const { data, debug } = await fetchTeraboxFileInfo({ shortUrl, appId, shareid, uk, debug: true });
-    const file = data.list && data.list[0];
-    if (!file) throw new Error("No file info found in Terabox API response");
-    return {
-      url: normalized,
-      title: file.server_filename,
-      size: file.size,
-      category: file.category,
-      isdir: file.isdir,
-      server_filename: file.server_filename,
-      dlink: file.dlink,
-      thumbs: file.thumbs,
-      description: void 0,
-      thumbnail: file.thumbs?.url1 || file.thumbs?.icon
-    };
-  } catch (error) {
-    console.error(`[Scraper] Error scraping ${normalized}:`, error);
-    return { url: normalized, title: "", error: error.message };
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
   }
 }
-async function scrapeWithPlaywright(urls) {
-  const browser = await chromium.launch({ headless: true });
-  const results = [];
-  const concurrency = 5;
-  const batches = [];
-  for (let i = 0; i < urls.length; i += concurrency) {
-    batches.push(urls.slice(i, i + concurrency));
+
+// server/api-proxies/rapidapi.ts
+import fetch6 from "node-fetch";
+async function rapidapiProxy(req, res) {
+  const { link } = req.body;
+  if (!link) {
+    return res.status(400).json({ error: "No link provided" });
   }
-  for (const batch of batches) {
-    const batchResults = await Promise.all(batch.map((url) => scrapeSingle(url, browser)));
-    results.push(...batchResults);
+  try {
+    const response = await fetch6("https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-rapidapi-host": "terabox-downloader-direct-download-link-generator.p.rapidapi.com",
+        "x-rapidapi-key": "357969b221msh32ff3122376c473p103b55jsn8b5dd54f26b7",
+        "accept": "*/*"
+      },
+      body: JSON.stringify({ url: link })
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
   }
-  await browser.close();
-  return results;
+}
+
+// server/api-proxies/tera-downloader-cc.ts
+import fetch7 from "node-fetch";
+async function teraDownloaderCcProxy(req, res) {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: "URL is required" });
+  }
+  try {
+    const response = await fetch7("https://www.tera-downloader.cc/api/terabox-download", {
+      method: "POST",
+      headers: {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "referer": "https://www.tera-downloader.cc/"
+      },
+      body: JSON.stringify({ url })
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
+  }
+}
+
+// server/api-proxies/teradwn.ts
+import fetch8 from "node-fetch";
+async function teradwnProxy(req, res) {
+  const { link } = req.body;
+  if (!link) {
+    return res.status(400).json({ error: "Link is required" });
+  }
+  try {
+    const params = new URLSearchParams();
+    params.append("action", "terabox_fetch");
+    params.append("url", link);
+    params.append("nonce", "ada26da710");
+    const response = await fetch8("https://teradownloadr.com/wp-admin/admin-ajax.php", {
+      method: "POST",
+      headers: {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "https://teradownloadr.com/"
+      },
+      body: params.toString()
+    });
+    const data = await response.text();
+    try {
+      const jsonData = JSON.parse(data);
+      res.json(jsonData);
+    } catch (e) {
+      res.send(data);
+    }
+  } catch (err) {
+    if (err instanceof Error) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
+  }
 }
 
 // server/routes.ts
@@ -311,8 +587,7 @@ async function scrapeMetadata(mediaItemId, storage2) {
   const mediaItem = await storage2.getMediaItem(mediaItemId);
   if (!mediaItem) return;
   console.log(`Scraping metadata for: ${mediaItem.url}`);
-  const results = await scrapeWithPlaywright([mediaItem.url]);
-  const result = results[0];
+  const result = await getSingleFileInfo(mediaItem.url);
   if (result) {
     console.log("Scrape result:", result);
     if (result.title) {
@@ -320,6 +595,8 @@ async function scrapeMetadata(mediaItemId, storage2) {
         title: result.title,
         description: result.description || mediaItem.description,
         thumbnail: result.thumbnail || mediaItem.thumbnail,
+        size: result.size_bytes,
+        type: result.type,
         error: null,
         scrapedAt: /* @__PURE__ */ new Date()
       };
@@ -394,6 +671,13 @@ function registerRoutes(app, storage2) {
       res.status(500).json({ error: "Failed to fetch API options" });
     }
   });
+  app.get("/api/teraboxfast", teraboxFastProxy);
+  app.post("/api/iteraplay-proxy", iteraplayProxy);
+  app.post("/api/playertera-proxy", playerteraProxy);
+  app.get("/api/mdisk-proxy", mdiskProxy);
+  app.post("/api/rapidapi", rapidapiProxy);
+  app.post("/api/tera-downloader-cc", teraDownloaderCcProxy);
+  app.post("/api/teradownloadr", teradwnProxy);
   app.get("/api/media", async (req, res) => {
     try {
       const { search, tags: tags2, type, sizeRange, page = "1", limit = "20" } = req.query;
@@ -747,9 +1031,9 @@ var DrizzleStorage = class {
   sqlite;
   dbPath;
   // Add dbPath property
-  constructor(dbName = "cipherbox.db") {
+  constructor(dbName = "/tmp/cipherbox.db") {
     this.dbPath = dbName;
-    this.sqlite = new Database(dbName, { verbose: console.log });
+    this.sqlite = new Database(this.dbPath, { verbose: console.log });
     this.db = drizzle(this.sqlite, { schema: schema_exports, logger: true });
   }
   async close() {

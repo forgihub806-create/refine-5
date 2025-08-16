@@ -2,6 +2,7 @@ import { type User, type InsertUser, type MediaItem, type InsertMediaItem, type 
 import { randomUUID } from "crypto";
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import Database from 'better-sqlite3';
+import path from 'path';
 import * as schema from '@shared/schema.ts';
 import { eq, and, desc, asc, like, inArray, sql } from 'drizzle-orm';
 
@@ -62,9 +63,9 @@ export class DrizzleStorage implements IStorage {
   private sqlite;
   private dbPath: string; // Add dbPath property
 
-  constructor(dbName: string = 'cipherbox.db') {
-    this.dbPath = dbName; // Initialize dbPath
-    this.sqlite = new Database(dbName, { verbose: console.log });
+  constructor(dbName: string = '/tmp/cipherbox.db') {
+    this.dbPath = dbName;
+    this.sqlite = new Database(this.dbPath, { verbose: console.log });
     this.db = drizzle(this.sqlite, { schema, logger: true });
   }
 

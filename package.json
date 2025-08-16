@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:electron\"",
     "dev:web": "npm run dev:server",
-  "dev:server": "cross-env NODE_ENV=development tsx server/index.ts",
-  "dev:electron": "cross-env NODE_ENV=development electron .",
+    "dev:server": "cross-env NODE_ENV=development tsx server/index.ts",
+    "dev:electron": "cross-env NODE_ENV=development electron .",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "cross-env NODE_ENV=production electron .",
     "start:web": "cross-env NODE_ENV=production node dist/index.js",
@@ -50,6 +50,7 @@
     "@tanstack/react-query": "^5.60.5",
     "@types/node-fetch": "^2.6.13",
     "better-sqlite3": "^12.2.0",
+    "cheerio": "^1.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -104,6 +105,7 @@
     "drizzle-kit": "^0.31.4",
     "electron": "^37.2.6",
     "esbuild": "^0.25.0",
+    "playwright": "^1.45.1",
     "postcss": "^8.4.47",
     "supertest": "^7.1.4",
     "tailwindcss": "^3.4.17",
@@ -111,8 +113,7 @@
     "typescript": "5.6.3",
     "vite": "^7.1.2",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4",
-    "playwright": "^1.45.1"
+    "vitest": "^3.2.4"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
